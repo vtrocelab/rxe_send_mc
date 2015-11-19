@@ -229,7 +229,7 @@ static int post_sends(struct cmatest_node *node, int signal_flag)
 
 	for (i = 0; i < message_count && !ret; i++) {
 		ret = ibv_post_send(node->cma_id->qp, &send_wr, &bad_send_wr);
-	      printf ("send the %d, message of %d \n",i,message_count);//leon added
+	      	//printf ("send the %d, message of %d \n",i,message_count);//leon added
 	
 		if (ret)
 			printf("failed to post sends: %d\n", ret);
@@ -421,14 +421,19 @@ static int poll_cqs(void)
 		if (!test.nodes[i].connected)
 			continue;
 
-		for (done = 0; done < message_count; done += ret) {
-			ret = ibv_poll_cq(test.nodes[i].cq, 8, wc);
+		//forr (done = 0; done < message_count; done += ret) {
+		while(1)
+			//ret = ibv_poll_cq(test.nodes[i].cq, 8, wc);
+			ret = ibv_poll_cq(test.nodes[i].cq, 1, wc);
 			if (ret < 0) {
 				printf("mckey: failed polling CQ: %d\n", ret);
 				return ret;
+			}else{
+				printf("mckey: recevied 1\n");
 			}
+			if(!post_recvs(&test.nodes[1]))
+				printf("mckey: posted 1\n");			
 		}
-	}
 	return 0;
 }
 
