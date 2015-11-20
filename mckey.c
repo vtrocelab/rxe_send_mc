@@ -193,7 +193,6 @@ static int post_recvs(struct cmatest_node *node)
 
 	for (i = 0; i < message_count && !ret; i++ ) {
 		ret = ibv_post_recv(node->cma_id->qp, &recv_wr, &recv_failure);
-                printf (" received the %d of %d message\n",i,message_count);
 		if (ret) {
 			printf("failed to post receives: %d\n", ret);
 			break;
@@ -422,11 +421,12 @@ static int poll_cqs(void)
 			continue;
 
 		for (done = 0; done < message_count; done += ret) {
-			ret = ibv_poll_cq(test.nodes[i].cq, 8, wc);
+			ret = ibv_poll_cq(test.nodes[i].cq, 1, wc);
 			if (ret < 0) {
 				printf("mckey: failed polling CQ: %d\n", ret);
 				return ret;
 			}
+			if (done && ret > 0) { printf("received message %d of %d\n", done, message_count);}	
 		}
 	}
 	return 0;
