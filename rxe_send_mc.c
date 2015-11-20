@@ -160,7 +160,7 @@ static int init_node(struct cmatest_node *node)
 	init_qp_attr.cap.max_send_sge = 1;
 	init_qp_attr.cap.max_recv_sge = 1;
 	init_qp_attr.qp_context = node;
-	init_qp_attr.sq_sig_all = 0;
+	init_qp_attr.sq_sig_all = 1; //singal all 
 	init_qp_attr.qp_type = IBV_QPT_UD;
 	init_qp_attr.send_cq = node->cq;
 	init_qp_attr.recv_cq = node->cq;
@@ -235,8 +235,7 @@ static int post_sends(struct cmatest_node *node, int signal_flag, int post_size)
 
 	for (i = 0; i < post_size && !ret; i++) {
 		ret = ibv_post_send(node->cma_id->qp, &send_wr, &bad_send_wr);
-		printf ("send the %d, message of %d \n",i,message_buffer * message_batch);
-	
+
 		if (ret)
 			printf("failed to post sends: %d\n", ret);
 	}
@@ -420,24 +419,22 @@ static void destroy_nodes(void)
 
 static int poll_cqs(void)
 {
-	struct ibv_wc wc[8];
-	int done, i, ret;
+	struct ibv_wc wc;
+	int done, i, ret, poll_ret;
 
 	for (i = 0; i < connections; i++) {
 		if (!test.nodes[i].connected)
 			continue;
 
-//		for (done = 0; done < message_buffer * message_batch; done += ret) {
-		for (done = 0; done < message_buffer * message_batch;) {
-			ret = ibv_poll_cq(test.nodes[i].cq, 1, wc);
-			if (ret < 0) { 
-				printf("rxe_send_mc: failed polling CQ: %d\n", ret); 
-				return ret; 
+		for (done = 0; done < message_buffer * message_batch; done += poll_ret) {
+			poll_ret = ibv_poll_cq(test.nodes[i].cq, 1, &wc);
+			if (poll_ret < 0) { 
+				printf("rxe_send_mc: failed polling CQ: %d\n", poll_ret); 
+				return poll_ret; 
 			}
-			done += ret;
 
 			if(!is_sender) {
-				if (done && ret > 0) {	
+				if (done && poll_ret > 0) {	
 					printf ("recv message %d \n", done); 
 					ret = post_recvs(&test.nodes[i],1);
 					if (ret < 0) { 
@@ -445,18 +442,22 @@ static int poll_cqs(void)
 						return ret; 
 					}
 				}
-			} else { 
-				
-				if (done && ret > 0) {	
-					printf ("recv message %d \n", done); 
-					ret = post_sends(&test.nodes[i],0,1);
-					if (ret < 0) { 
-						printf("rxe_send_mc: failed post sends after polling CQ: %d\n", ret); 
-						return ret; 
-					}
+			} else if(wc.opcode == IBV_WC_SEND && poll_ret > 0 && wc.status == IBV_WC_SUCCESS ) {
+				ret = post_sends(&test.nodes[i],IBV_SEND_SIGNALED,1);
+				if (ret < 0) { 
+					printf("rxe_send_mc: failed posting send: %d\n", ret); 
+					return ret; 
 				}
-			}
+				if(done % 100 == 0){
+					printf ("sending message %d of %d \n", done, message_buffer * message_batch);
+				}
+				if (ret < 0) { 
+					printf("rxe_send_mc: failed post sends after polling CQ: %d\n", ret); 
+					return ret; 
+				}
+			} 
 		}
+		printf ("have sent the last message %d of %d \n", done, message_buffer * message_batch);
 	}
 	return 0;
 }
@@ -495,7 +496,7 @@ static int get_addr(char *dst, struct sockaddr *addr)
 static int run(void)
 {
 	int i, ret;
-
+	
 	printf("rxe_send_mc: starting %s\n", is_sender ? "client" : "server");
 	if (src_addr) {
 		ret = get_addr(src_addr, (struct sockaddr *) &test.src_in);
@@ -548,15 +549,18 @@ static int run(void)
 		if (is_sender) {
 			printf("initiating data transfers\n");
 			for (i = 0; i < connections; i++) {
-				ret = post_sends(&test.nodes[i], 0, message_buffer);
+				ret = post_sends(&test.nodes[i], IBV_SEND_SIGNALED, 1);
 				if (ret)
 					goto out;
+
 			}
 		} else {
 			printf("receiving data transfers\n");
 
 		}
+
 		ret = poll_cqs();
+
 		if (ret) 
 			goto out;
 
@@ -598,7 +602,6 @@ int main(int argc, char **argv)
 			break;
 		case 'C':
 			message_batch = atoi(optarg);
-			message_batch *= 1000;
 			break;
 		case 'S':
 			message_size = atoi(optarg);

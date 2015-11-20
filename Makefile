@@ -1,4 +1,4 @@
-TARGET = mckey
+TARGET = rxe_send_mc
 
 all: $(TARGET)
 
