@@ -81,8 +81,8 @@ struct cmatest {
 static struct cmatest test;
 static int connections = 1;
 static int message_size = 100;
-static int message_count = 1000;
-static int message_batch = 100; 
+static int message_buffer = 1000;
+static int message_batch = 10; 
 static int is_sender;
 static int unmapped_addr;
 static char *dst_addr;
@@ -92,9 +92,9 @@ static enum rdma_port_space port_space = RDMA_PS_UDP;
 static int create_message(struct cmatest_node *node)
 {
 	if (!message_size)
-		message_count = 0;
+		message_buffer = 0;
 
-	if (!message_count)
+	if (!message_buffer)
 		return 0;
 
 	node->mem = malloc(message_size + sizeof(struct ibv_grh));
@@ -125,7 +125,7 @@ static int verify_test_params(struct cmatest_node *node)
 	if (ret)
 		return ret;
 
-	if (message_count && message_size > (1 << (port_attr.active_mtu + 7))) {
+	if (message_buffer && message_size > (1 << (port_attr.active_mtu + 7))) {
 		printf("rxe_send_mc: message_size %d is larger than active mtu %d\n",
 		       message_size, 1 << (port_attr.active_mtu + 7));
 		return -EINVAL;
@@ -146,7 +146,7 @@ static int init_node(struct cmatest_node *node)
 		goto out;
 	}
 
-	cqe = message_count ? message_count * 2 : 2;
+	cqe = message_buffer ? message_buffer * 2 : 2;
 	node->cq = ibv_create_cq(node->cma_id->verbs, cqe, node, 0, 0);
 	if (!node->cq) {
 		ret = -ENOMEM;
@@ -155,8 +155,8 @@ static int init_node(struct cmatest_node *node)
 	}
 
 	memset(&init_qp_attr, 0, sizeof init_qp_attr);
-	init_qp_attr.cap.max_send_wr = message_count ? message_count : 1;
-	init_qp_attr.cap.max_recv_wr = message_count ? message_count : 1;
+	init_qp_attr.cap.max_send_wr = message_buffer ? message_buffer : 1;
+	init_qp_attr.cap.max_recv_wr = message_buffer ? message_buffer : 1;
 	init_qp_attr.cap.max_send_sge = 1;
 	init_qp_attr.cap.max_recv_sge = 1;
 	init_qp_attr.qp_context = node;
@@ -185,7 +185,7 @@ static int post_recvs(struct cmatest_node *node, int post_depth)
 	struct ibv_sge sge;
 	int i, ret = 0;
 
-	if (!message_count)
+	if (!message_buffer)
 		return 0;
 
 	recv_wr.next = NULL;
@@ -208,13 +208,13 @@ static int post_recvs(struct cmatest_node *node, int post_depth)
 	return ret;
 }
 
-static int post_sends(struct cmatest_node *node, int signal_flag)
+static int post_sends(struct cmatest_node *node, int signal_flag, int post_size)
 {
 	struct ibv_send_wr send_wr, *bad_send_wr;
 	struct ibv_sge sge;
 	int i, ret = 0;
 
-	if (!node->connected || !message_count)
+	if (!node->connected || !message_buffer)
 		return 0;
 
 	send_wr.next = NULL;
@@ -233,9 +233,9 @@ static int post_sends(struct cmatest_node *node, int signal_flag)
 	sge.lkey = node->mr->lkey;
 	sge.addr = (uintptr_t) node->mem;
 
-	for (i = 0; i < message_count * message_batch && !ret; i++) {
+	for (i = 0; i < post_size && !ret; i++) {
 		ret = ibv_post_send(node->cma_id->qp, &send_wr, &bad_send_wr);
-		printf ("send the %d, message of %d \n",i,message_count * message_batch);
+		printf ("send the %d, message of %d \n",i,message_buffer * message_batch);
 	
 		if (ret)
 			printf("failed to post sends: %d\n", ret);
@@ -261,7 +261,7 @@ static int addr_handler(struct cmatest_node *node)
 		goto err;
 
 	if (!is_sender) {
-		ret = post_recvs(node,message_count);
+		ret = post_recvs(node,message_buffer);
 		if (ret)
 			goto err;
 	}
@@ -427,21 +427,33 @@ static int poll_cqs(void)
 		if (!test.nodes[i].connected)
 			continue;
 
-//		for (done = 0; done < message_count * message_batch; done += ret) {
-		for (done = 0; done < message_count * message_batch;) {
+//		for (done = 0; done < message_buffer * message_batch; done += ret) {
+		for (done = 0; done < message_buffer * message_batch;) {
 			ret = ibv_poll_cq(test.nodes[i].cq, 1, wc);
-			done += ret;
-
 			if (ret < 0) { 
 				printf("rxe_send_mc: failed polling CQ: %d\n", ret); 
 				return ret; 
 			}
-			if (done && ret > 0) {	
-				printf ("recv message %d \n", done); 
-				ret = post_recvs(&test.nodes[i],1);
-				if (ret < 0) { 
-					printf("rxe_send_mc: failed post after polling CQ: %d\n", ret); 
-					return ret; 
+			done += ret;
+
+			if(!is_sender) {
+				if (done && ret > 0) {	
+					printf ("recv message %d \n", done); 
+					ret = post_recvs(&test.nodes[i],1);
+					if (ret < 0) { 
+						printf("rxe_send_mc: failed post receives after polling CQ: %d\n", ret); 
+						return ret; 
+					}
+				}
+			} else { 
+				
+				if (done && ret > 0) {	
+					printf ("recv message %d \n", done); 
+					ret = post_sends(&test.nodes[i],0,1);
+					if (ret < 0) { 
+						printf("rxe_send_mc: failed post sends after polling CQ: %d\n", ret); 
+						return ret; 
+					}
 				}
 			}
 		}
@@ -532,20 +544,22 @@ static int run(void)
 	 */
 	sleep(3);
 
-	if (message_count) {
+	if (message_batch) {
 		if (is_sender) {
 			printf("initiating data transfers\n");
 			for (i = 0; i < connections; i++) {
-				ret = post_sends(&test.nodes[i], 0);
+				ret = post_sends(&test.nodes[i], 0, message_buffer);
 				if (ret)
 					goto out;
 			}
 		} else {
 			printf("receiving data transfers\n");
-			ret = poll_cqs();
-			if (ret)
-				goto out;
+
 		}
+		ret = poll_cqs();
+		if (ret) 
+			goto out;
+
 		printf("data transfers complete\n");
 	}
 out:
@@ -584,6 +598,7 @@ int main(int argc, char **argv)
 			break;
 		case 'C':
 			message_batch = atoi(optarg);
+			message_batch *= 1000;
 			break;
 		case 'S':
 			message_size = atoi(optarg);
@@ -599,7 +614,7 @@ int main(int argc, char **argv)
 			printf("\t[-s(ender)]\n");
 			printf("\t[-b bind_address]\n");
 			printf("\t[-c connections]\n");
-			printf("\t[-C message_count]\n");
+			printf("\t[-C message_buffer]\n");
 			printf("\t[-S message_size]\n");
 			printf("\t[-p port_space - %#x for UDP (default), "
 			       "%#x for IPOIB]\n", RDMA_PS_UDP, RDMA_PS_IPOIB);
