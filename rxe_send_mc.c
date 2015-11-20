@@ -1,3 +1,8 @@
+/* copy left (c) 2015 Viscore Technologies In. GPL license
+* changed from original mckey.c code to test multicast performance of
+* RoCE send multicast. 
+*/
+
 /*
  * Copyright (c) 2005-2007 Intel Corporation.  All rights reserved.
  *
@@ -76,11 +81,8 @@ struct cmatest {
 static struct cmatest test;
 static int connections = 1;
 static int message_size = 100;
-<<<<<<< HEAD
-=======
-static int INIT_POST_RECVS = 10;
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
-static int message_count = 10;
+static int message_count = 1000;
+static int message_batch = 100; 
 static int is_sender;
 static int unmapped_addr;
 static char *dst_addr;
@@ -124,7 +126,7 @@ static int verify_test_params(struct cmatest_node *node)
 		return ret;
 
 	if (message_count && message_size > (1 << (port_attr.active_mtu + 7))) {
-		printf("mckey: message_size %d is larger than active mtu %d\n",
+		printf("rxe_send_mc: message_size %d is larger than active mtu %d\n",
 		       message_size, 1 << (port_attr.active_mtu + 7));
 		return -EINVAL;
 	}
@@ -140,7 +142,7 @@ static int init_node(struct cmatest_node *node)
 	node->pd = ibv_alloc_pd(node->cma_id->verbs);
 	if (!node->pd) {
 		ret = -ENOMEM;
-		printf("mckey: unable to allocate PD\n");
+		printf("rxe_send_mc: unable to allocate PD\n");
 		goto out;
 	}
 
@@ -148,7 +150,7 @@ static int init_node(struct cmatest_node *node)
 	node->cq = ibv_create_cq(node->cma_id->verbs, cqe, node, 0, 0);
 	if (!node->cq) {
 		ret = -ENOMEM;
-		printf("mckey: unable to create CQ\n");
+		printf("rxe_send_mc: unable to create CQ\n");
 		goto out;
 	}
 
@@ -164,24 +166,20 @@ static int init_node(struct cmatest_node *node)
 	init_qp_attr.recv_cq = node->cq;
 	ret = rdma_create_qp(node->cma_id, node->pd, &init_qp_attr);
 	if (ret) {
-		perror("mckey: unable to create QP");
+		perror("rxe_send_mc: unable to create QP");
 		goto out;
 	}
 
 	ret = create_message(node);
 	if (ret) {
-		printf("mckey: failed to create messages: %d\n", ret);
+		printf("rxe_send_mc: failed to create messages: %d\n", ret);
 		goto out;
 	}
 out:
 	return ret;
 }
 
-<<<<<<< HEAD
-static int post_recvs(struct cmatest_node *node)
-=======
 static int post_recvs(struct cmatest_node *node, int post_depth)
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
 {
 	struct ibv_recv_wr recv_wr, *recv_failure;
 	struct ibv_sge sge;
@@ -199,14 +197,9 @@ static int post_recvs(struct cmatest_node *node, int post_depth)
 	sge.lkey = node->mr->lkey;
 	sge.addr = (uintptr_t) node->mem;
 
-<<<<<<< HEAD
-	for (i = 0; i < message_count && !ret; i++ ) {
+	for (i = 0; i < post_depth; i++ ) {
 		ret = ibv_post_recv(node->cma_id->qp, &recv_wr, &recv_failure);
-                printf (" received the %d of %d message\n",i,message_count);
-=======
-	for (i = 0; i < post_depth && !ret; i++ ) {
-		ret = ibv_post_recv(node->cma_id->qp, &recv_wr, &recv_failure);
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
+
 		if (ret) {
 			printf("failed to post receives: %d\n", ret);
 			break;
@@ -240,13 +233,10 @@ static int post_sends(struct cmatest_node *node, int signal_flag)
 	sge.lkey = node->mr->lkey;
 	sge.addr = (uintptr_t) node->mem;
 
-	for (i = 0; i < message_count && !ret; i++) {
+	for (i = 0; i < message_count * message_batch && !ret; i++) {
 		ret = ibv_post_send(node->cma_id->qp, &send_wr, &bad_send_wr);
-<<<<<<< HEAD
-	      printf ("send the %d, message of %d \n",i,message_count);//leon added
+		printf ("send the %d, message of %d \n",i,message_count * message_batch);
 	
-=======
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
 		if (ret)
 			printf("failed to post sends: %d\n", ret);
 	}
@@ -271,18 +261,14 @@ static int addr_handler(struct cmatest_node *node)
 		goto err;
 
 	if (!is_sender) {
-<<<<<<< HEAD
-		ret = post_recvs(node);
-=======
-		ret = post_recvs(node,INIT_POST_RECVS);
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
+		ret = post_recvs(node,message_count);
 		if (ret)
 			goto err;
 	}
 
 	ret = rdma_join_multicast(node->cma_id, test.dst_addr, node);
 	if (ret) {
-		perror("mckey: failure joining");
+		perror("rxe_send_mc: failure joining");
 		goto err;
 	}
 	return 0;
@@ -297,14 +283,14 @@ static int join_handler(struct cmatest_node *node,
 	char buf[40];
 
 	inet_ntop(AF_INET6, param->ah_attr.grh.dgid.raw, buf, 40);
-	printf("mckey: joined dgid: %s mlid 0x%x sl %d\n", buf,
+	printf("rxe_send_mc: joined dgid: %s mlid 0x%x sl %d\n", buf,
 		param->ah_attr.dlid, param->ah_attr.sl);
 
 	node->remote_qpn = param->qp_num;
 	node->remote_qkey = param->qkey;
 	node->ah = ibv_create_ah(node->pd, &param->ah_attr);
 	if (!node->ah) {
-		printf("mckey: failure creating address handle\n");
+		printf("rxe_send_mc: failure creating address handle\n");
 		goto err;
 	}
 
@@ -330,7 +316,7 @@ static int cma_handler(struct rdma_cm_id *cma_id, struct rdma_cm_event *event)
 	case RDMA_CM_EVENT_ADDR_ERROR:
 	case RDMA_CM_EVENT_ROUTE_ERROR:
 	case RDMA_CM_EVENT_MULTICAST_ERROR:
-		printf("mckey: event: %s, error: %d\n",
+		printf("rxe_send_mc: event: %s, error: %d\n",
 		       rdma_event_str(event->event), event->status);
 		connect_error();
 		ret = event->status;
@@ -359,7 +345,7 @@ static void *cma_thread(void *arg)
 		switch (event->event) {
 		case RDMA_CM_EVENT_MULTICAST_ERROR:
 		case RDMA_CM_EVENT_ADDR_CHANGE:
-			printf("mckey: event: %s, status: %d\n",
+			printf("rxe_send_mc: event: %s, status: %d\n",
 			       rdma_event_str(event->event), event->status);
 			break;
 		default:
@@ -403,7 +389,7 @@ static int alloc_nodes(void)
 
 	test.nodes = malloc(sizeof *test.nodes * connections);
 	if (!test.nodes) {
-		printf("mckey: unable to allocate memory for test nodes\n");
+		printf("rxe_send_mc: unable to allocate memory for test nodes\n");
 		return -ENOMEM;
 	}
 	memset(test.nodes, 0, sizeof *test.nodes * connections);
@@ -441,26 +427,23 @@ static int poll_cqs(void)
 		if (!test.nodes[i].connected)
 			continue;
 
-		for (done = 0; done < message_count; done += ret) {
-<<<<<<< HEAD
-			ret = ibv_poll_cq(test.nodes[i].cq, 8, wc);
-=======
+//		for (done = 0; done < message_count * message_batch; done += ret) {
+		for (done = 0; done < message_count * message_batch;) {
 			ret = ibv_poll_cq(test.nodes[i].cq, 1, wc);
-<<<<<<< HEAD
-			if (ret < 0) { printf("mckey: failed polling CQ: %d\n", ret); return ret; }
-			ret = post_recvs(&test.nodes[i],1);
-			if (ret < 0) { printf("mckey: failed posting after polling CQ: %d\n", ret); return ret; }
-=======
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
-			if (ret < 0) {
-				printf("mckey: failed polling CQ: %d\n", ret);
-				return ret;
+			done += ret;
+
+			if (ret < 0) { 
+				printf("rxe_send_mc: failed polling CQ: %d\n", ret); 
+				return ret; 
 			}
-<<<<<<< HEAD
-=======
-			if (done && ret > 0) { printf("received message %d of %d\n", done, message_count);}	
->>>>>>> temp0
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
+			if (done && ret > 0) {	
+				printf ("recv message %d \n", done); 
+				ret = post_recvs(&test.nodes[i],1);
+				if (ret < 0) { 
+					printf("rxe_send_mc: failed post after polling CQ: %d\n", ret); 
+					return ret; 
+				}
+			}
 		}
 	}
 	return 0;
@@ -501,7 +484,7 @@ static int run(void)
 {
 	int i, ret;
 
-	printf("mckey: starting %s\n", is_sender ? "client" : "server");
+	printf("rxe_send_mc: starting %s\n", is_sender ? "client" : "server");
 	if (src_addr) {
 		ret = get_addr(src_addr, (struct sockaddr *) &test.src_in);
 		if (ret)
@@ -512,13 +495,13 @@ static int run(void)
 	if (ret)
 		return ret;
 
-	printf("mckey: joining\n");
+	printf("rxe_send_mc: joining\n");
 	for (i = 0; i < connections; i++) {
 		if (src_addr) {
 			ret = rdma_bind_addr(test.nodes[i].cma_id,
 					     test.src_addr);
 			if (ret) {
-				perror("mckey: addr bind failure");
+				perror("rxe_send_mc: addr bind failure");
 				connect_error();
 				return ret;
 			}
@@ -531,7 +514,7 @@ static int run(void)
 						test.src_addr, test.dst_addr,
 						2000);
 		if (ret) {
-			perror("mckey: resolve addr failure");
+			perror("rxe_send_mc: resolve addr failure");
 			connect_error();
 			return ret;
 		}
@@ -570,7 +553,7 @@ out:
 		ret = rdma_leave_multicast(test.nodes[i].cma_id,
 					   test.dst_addr);
 		if (ret)
-			perror("mckey: failure leaving");
+			perror("rxe_send_mc: failure leaving");
 	}
 	return ret;
 }
@@ -600,7 +583,7 @@ int main(int argc, char **argv)
 			connections = atoi(optarg);
 			break;
 		case 'C':
-			message_count = atoi(optarg);
+			message_batch = atoi(optarg);
 			break;
 		case 'S':
 			message_size = atoi(optarg);
