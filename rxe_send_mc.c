@@ -81,8 +81,8 @@ struct cmatest {
 static struct cmatest test;
 static int connections = 1;
 static int message_size = 100;
-static int message_count = 10;
-static int init_post_depth = 10; 
+static int message_count = 1000;
+static int message_batch = 100; 
 static int is_sender;
 static int unmapped_addr;
 static char *dst_addr;
@@ -197,7 +197,7 @@ static int post_recvs(struct cmatest_node *node, int post_depth)
 	sge.lkey = node->mr->lkey;
 	sge.addr = (uintptr_t) node->mem;
 
-	for (i = 0; i < post_depth && !ret; i++ ) {
+	for (i = 0; i < post_depth; i++ ) {
 		ret = ibv_post_recv(node->cma_id->qp, &recv_wr, &recv_failure);
 
 		if (ret) {
@@ -233,9 +233,9 @@ static int post_sends(struct cmatest_node *node, int signal_flag)
 	sge.lkey = node->mr->lkey;
 	sge.addr = (uintptr_t) node->mem;
 
-	for (i = 0; i < message_count && !ret; i++) {
+	for (i = 0; i < message_count * message_batch && !ret; i++) {
 		ret = ibv_post_send(node->cma_id->qp, &send_wr, &bad_send_wr);
-		printf ("send the %d, message of %d \n",i,message_count);//leon added
+		printf ("send the %d, message of %d \n",i,message_count * message_batch);
 	
 		if (ret)
 			printf("failed to post sends: %d\n", ret);
@@ -261,7 +261,7 @@ static int addr_handler(struct cmatest_node *node)
 		goto err;
 
 	if (!is_sender) {
-		ret = post_recvs(node,init_post_depth);
+		ret = post_recvs(node,message_count);
 		if (ret)
 			goto err;
 	}
@@ -427,12 +427,23 @@ static int poll_cqs(void)
 		if (!test.nodes[i].connected)
 			continue;
 
-		for (done = 0; done < message_count; done += ret) {
-			ret = ibv_poll_cq(test.nodes[i].cq, 8, wc);
-			if (ret < 0) { printf("rxe_send_mc: failed polling CQ: %d\n", ret); return ret; }
+//		for (done = 0; done < message_count * message_batch; done += ret) {
+		for (done = 0; done < message_count * message_batch;) {
+			ret = ibv_poll_cq(test.nodes[i].cq, 1, wc);
+			done += ret;
 
-			ret = post_recvs(&test.nodes[i],1);
-			if (ret < 0) { printf("rxe_send_mc: failed post after polling CQ: %d\n", ret); return ret; }
+			if (ret < 0) { 
+				printf("rxe_send_mc: failed polling CQ: %d\n", ret); 
+				return ret; 
+			}
+			if (done && ret > 0) {	
+				printf ("recv message %d \n", done); 
+				ret = post_recvs(&test.nodes[i],1);
+				if (ret < 0) { 
+					printf("rxe_send_mc: failed post after polling CQ: %d\n", ret); 
+					return ret; 
+				}
+			}
 		}
 	}
 	return 0;
@@ -572,7 +583,7 @@ int main(int argc, char **argv)
 			connections = atoi(optarg);
 			break;
 		case 'C':
-			message_count = atoi(optarg);
+			message_batch = atoi(optarg);
 			break;
 		case 'S':
 			message_size = atoi(optarg);
