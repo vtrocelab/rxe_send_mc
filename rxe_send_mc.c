@@ -439,17 +439,19 @@ static int poll_cqs(void)
 				printf("rxe_send_mc: failed polling CQ: %d\n", poll_ret); 
 				return poll_ret; 
 			}
+
+			if (done && poll_ret > 0) {
+				if(ts0.tv_sec == -1 && ts0.tv_nsec == -1){
+					clock_gettime(CLOCK_REALTIME, &ts0);
+				}
+                        }
+
 			if(!is_sender) {
-				if (done && poll_ret > 0) {
-					if(ts0.tv_sec == -1 && ts0.tv_nsec == -1){
-						clock_gettime(CLOCK_REALTIME, &ts0);
-					}
-					if (done % print_base == 0) printf ("recv message %d \n", done); 
-					ret = post_recvs(&test.nodes[i],poll_ret);
-					if (ret < 0) { 
-						printf("rxe_send_mc: failed post receives after polling CQ: %d\n", ret); 
-						return ret; 
-					}
+				if (done % print_base == 0) { printf ("recv message %d \n", done); }
+				ret = post_recvs(&test.nodes[i],poll_ret);
+				if (ret < 0) { 
+					printf("rxe_send_mc: failed post receives after polling CQ: %d\n", ret); 
+					return ret; 
 				}
 			} else if(wc->opcode == IBV_WC_SEND && poll_ret > 0 && wc->status == IBV_WC_SUCCESS ) {
 				ret = post_sends(&test.nodes[i],IBV_SEND_SIGNALED,poll_ret);
@@ -466,14 +468,13 @@ static int poll_cqs(void)
 				}
 			} 
 		}
-		if (!is_sender) {
-			clock_gettime(CLOCK_REALTIME, &ts1);
-			double param =  1000000000;
-			long nsec = (ts1.tv_sec - ts0.tv_sec) * param + ts1.tv_nsec - ts0.tv_nsec;
-			long byte = (long)message_buffer * (long)message_batch * (long)message_size;
-			double bd = (byte/(nsec/param))/134217728;
-			printf ("bandwidth %f\n", bd);
-		}
+
+		clock_gettime(CLOCK_REALTIME, &ts1);
+		double param =  1000000000;
+		long nsec = (ts1.tv_sec - ts0.tv_sec) * param + ts1.tv_nsec - ts0.tv_nsec;
+		long byte = (long)message_buffer * (long)message_batch * (long)message_size;
+		double bd = (byte/(nsec/param))/134217728;
+		printf ("bandwidth %f\n", bd);
 		printf ("have sent the last message %d of %d \n", done, message_buffer * message_batch);
 	}
 	return 0;
