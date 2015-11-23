@@ -49,7 +49,7 @@
 #include <byteswap.h>
 #include <unistd.h>
 #include <getopt.h>
-
+#include <time.h>
 #include <rdma/rdma_cma.h>
 
 struct cmatest_node {
@@ -419,31 +419,37 @@ static void destroy_nodes(void)
 
 static int poll_cqs(void)
 {
-	struct ibv_wc wc;
+	struct ibv_wc wc[8];
 	int done, i, ret, poll_ret;
+	
+	struct timespec ts0, ts1;
+	ts0.tv_sec = -1;
+	ts0.tv_nsec = -1;
 
 	for (i = 0; i < connections; i++) {
 		if (!test.nodes[i].connected)
 			continue;
 
 		for (done = 0; done < message_buffer * message_batch; done += poll_ret) {
-			poll_ret = ibv_poll_cq(test.nodes[i].cq, 1, &wc);
-			if (poll_ret < 0) { 
+			poll_ret = ibv_poll_cq(test.nodes[i].cq, 8, wc);
+			if (poll_ret < 0) {
 				printf("rxe_send_mc: failed polling CQ: %d\n", poll_ret); 
 				return poll_ret; 
 			}
-
 			if(!is_sender) {
-				if (done && poll_ret > 0) {	
-					printf ("recv message %d \n", done); 
-					ret = post_recvs(&test.nodes[i],1);
+				if (done && poll_ret > 0) {
+					if(ts0.tv_sec == -1 && ts0.tv_nsec == -1){
+						clock_gettime(CLOCK_REALTIME, &ts0);
+					}
+					//if (done % 100000 == 0) printf ("recv message %d \n", done); 
+					ret = post_recvs(&test.nodes[i],poll_ret);
 					if (ret < 0) { 
 						printf("rxe_send_mc: failed post receives after polling CQ: %d\n", ret); 
 						return ret; 
 					}
 				}
-			} else if(wc.opcode == IBV_WC_SEND && poll_ret > 0 && wc.status == IBV_WC_SUCCESS ) {
-				ret = post_sends(&test.nodes[i],IBV_SEND_SIGNALED,1);
+			} else if(wc->opcode == IBV_WC_SEND && poll_ret > 0 && wc->status == IBV_WC_SUCCESS ) {
+				ret = post_sends(&test.nodes[i],IBV_SEND_SIGNALED,poll_ret);
 				if (ret < 0) { 
 					printf("rxe_send_mc: failed posting send: %d\n", ret); 
 					return ret; 
@@ -457,6 +463,12 @@ static int poll_cqs(void)
 				}
 			} 
 		}
+		clock_gettime(CLOCK_REALTIME, &ts1);
+		double param =  1000000000;
+		long nsec = (ts1.tv_sec - ts0.tv_sec) * param + ts1.tv_nsec - ts0.tv_nsec;
+		long byte = (long)message_buffer * (long)message_batch * (long)message_size;
+		double bd = (byte/(nsec/param))/134217728;
+		printf ("bandwidth %f\n", bd);
 		printf ("have sent the last message %d of %d \n", done, message_buffer * message_batch);
 	}
 	return 0;
@@ -601,7 +613,7 @@ int main(int argc, char **argv)
 			connections = atoi(optarg);
 			break;
 		case 'C':
-			message_batch = atoi(optarg);
+			message_batch *= atoi(optarg);
 			break;
 		case 'S':
 			message_size = atoi(optarg);
