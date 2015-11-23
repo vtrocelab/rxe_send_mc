@@ -621,7 +621,7 @@ int main(int argc, char **argv)
 			message_batch *= atoi(optarg);
 			break;
 		case 'i':
-			print_base *= atoi(optarg); 
+			print_base = 10000 * atoi(optarg); 
 		case 'S':
 			message_size = atoi(optarg);
 			break;
