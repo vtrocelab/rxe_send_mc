@@ -84,6 +84,7 @@ static int message_size = 100;
 static int message_buffer = 1000;
 static int message_batch = 10; 
 static int is_sender;
+static int print_base = -1; 
 static int unmapped_addr;
 static char *dst_addr;
 static char *src_addr;
@@ -430,6 +431,8 @@ static int poll_cqs(void)
 		if (!test.nodes[i].connected)
 			continue;
 
+		if (print_base == -1) print_base = message_buffer * message_batch; 
+
 		for (done = 0; done < message_buffer * message_batch; done += poll_ret) {
 			poll_ret = ibv_poll_cq(test.nodes[i].cq, 8, wc);
 			if (poll_ret < 0) {
@@ -441,7 +444,7 @@ static int poll_cqs(void)
 					if(ts0.tv_sec == -1 && ts0.tv_nsec == -1){
 						clock_gettime(CLOCK_REALTIME, &ts0);
 					}
-					//if (done % 100000 == 0) printf ("recv message %d \n", done); 
+					if (done % print_base == 0) printf ("recv message %d \n", done); 
 					ret = post_recvs(&test.nodes[i],poll_ret);
 					if (ret < 0) { 
 						printf("rxe_send_mc: failed post receives after polling CQ: %d\n", ret); 
@@ -454,7 +457,7 @@ static int poll_cqs(void)
 					printf("rxe_send_mc: failed posting send: %d\n", ret); 
 					return ret; 
 				}
-				if(done % 100 == 0){
+				if(done % print_base == 0){
 					printf ("sending message %d of %d \n", done, message_buffer * message_batch);
 				}
 				if (ret < 0) { 
@@ -463,12 +466,14 @@ static int poll_cqs(void)
 				}
 			} 
 		}
-		clock_gettime(CLOCK_REALTIME, &ts1);
-		double param =  1000000000;
-		long nsec = (ts1.tv_sec - ts0.tv_sec) * param + ts1.tv_nsec - ts0.tv_nsec;
-		long byte = (long)message_buffer * (long)message_batch * (long)message_size;
-		double bd = (byte/(nsec/param))/134217728;
-		printf ("bandwidth %f\n", bd);
+		if (!is_sender) {
+			clock_gettime(CLOCK_REALTIME, &ts1);
+			double param =  1000000000;
+			long nsec = (ts1.tv_sec - ts0.tv_sec) * param + ts1.tv_nsec - ts0.tv_nsec;
+			long byte = (long)message_buffer * (long)message_batch * (long)message_size;
+			double bd = (byte/(nsec/param))/134217728;
+			printf ("bandwidth %f\n", bd);
+		}
 		printf ("have sent the last message %d of %d \n", done, message_buffer * message_batch);
 	}
 	return 0;
@@ -593,7 +598,7 @@ int main(int argc, char **argv)
 	int op, ret;
 
 
-	while ((op = getopt(argc, argv, "m:M:sb:c:C:S:p:")) != -1) {
+	while ((op = getopt(argc, argv, "m:M:sb:c:C:i:S:p:")) != -1) {
 		switch (op) {
 		case 'm':
 			dst_addr = optarg;
@@ -615,6 +620,8 @@ int main(int argc, char **argv)
 		case 'C':
 			message_batch *= atoi(optarg);
 			break;
+		case 'i':
+			print_base *= atoi(optarg); 
 		case 'S':
 			message_size = atoi(optarg);
 			break;
