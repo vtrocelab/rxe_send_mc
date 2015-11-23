@@ -622,6 +622,7 @@ int main(int argc, char **argv)
 			break;
 		case 'i':
 			print_base = 10000 * atoi(optarg); 
+			break;
 		case 'S':
 			message_size = atoi(optarg);
 			break;
