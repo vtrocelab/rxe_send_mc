@@ -76,10 +76,7 @@ struct cmatest {
 static struct cmatest test;
 static int connections = 1;
 static int message_size = 100;
-<<<<<<< HEAD
-=======
 static int INIT_POST_RECVS = 10;
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
 static int message_count = 10;
 static int is_sender;
 static int unmapped_addr;
@@ -177,11 +174,7 @@ out:
 	return ret;
 }
 
-<<<<<<< HEAD
-static int post_recvs(struct cmatest_node *node)
-=======
 static int post_recvs(struct cmatest_node *node, int post_depth)
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
 {
 	struct ibv_recv_wr recv_wr, *recv_failure;
 	struct ibv_sge sge;
@@ -199,14 +192,8 @@ static int post_recvs(struct cmatest_node *node, int post_depth)
 	sge.lkey = node->mr->lkey;
 	sge.addr = (uintptr_t) node->mem;
 
-<<<<<<< HEAD
-	for (i = 0; i < message_count && !ret; i++ ) {
-		ret = ibv_post_recv(node->cma_id->qp, &recv_wr, &recv_failure);
-                printf (" received the %d of %d message\n",i,message_count);
-=======
 	for (i = 0; i < post_depth && !ret; i++ ) {
 		ret = ibv_post_recv(node->cma_id->qp, &recv_wr, &recv_failure);
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
 		if (ret) {
 			printf("failed to post receives: %d\n", ret);
 			break;
@@ -242,11 +229,6 @@ static int post_sends(struct cmatest_node *node, int signal_flag)
 
 	for (i = 0; i < message_count && !ret; i++) {
 		ret = ibv_post_send(node->cma_id->qp, &send_wr, &bad_send_wr);
-<<<<<<< HEAD
-	      printf ("send the %d, message of %d \n",i,message_count);//leon added
-	
-=======
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
 		if (ret)
 			printf("failed to post sends: %d\n", ret);
 	}
@@ -271,11 +253,7 @@ static int addr_handler(struct cmatest_node *node)
 		goto err;
 
 	if (!is_sender) {
-<<<<<<< HEAD
-		ret = post_recvs(node);
-=======
 		ret = post_recvs(node,INIT_POST_RECVS);
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
 		if (ret)
 			goto err;
 	}
@@ -442,25 +420,14 @@ static int poll_cqs(void)
 			continue;
 
 		for (done = 0; done < message_count; done += ret) {
-<<<<<<< HEAD
-			ret = ibv_poll_cq(test.nodes[i].cq, 8, wc);
-=======
 			ret = ibv_poll_cq(test.nodes[i].cq, 1, wc);
-<<<<<<< HEAD
 			if (ret < 0) { printf("mckey: failed polling CQ: %d\n", ret); return ret; }
 			ret = post_recvs(&test.nodes[i],1);
-			if (ret < 0) { printf("mckey: failed posting after polling CQ: %d\n", ret); return ret; }
-=======
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
 			if (ret < 0) {
 				printf("mckey: failed polling CQ: %d\n", ret);
 				return ret;
 			}
-<<<<<<< HEAD
-=======
 			if (done && ret > 0) { printf("received message %d of %d\n", done, message_count);}	
->>>>>>> temp0
->>>>>>> b023787c5ddc96671dfad2944074988e4ac99724
 		}
 	}
 	return 0;
