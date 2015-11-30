@@ -1,10 +1,14 @@
-TARGET = rxe_send_mc
+TARGET1 = mckey
+TARGET2 = rxe_send_mc
 
-all: $(TARGET)
+all: $(TARGET1) $(TARGET2)
 
-$(TARGET): $(TARGET).c
+$(TARGET1): $(TARGET2).c
+$(TARGET1): $(TARGET2).c
 
-	gcc -g -Wall -D_GNU_SOURCE -g -O2 -o $(TARGET) $(TARGET).c -libverbs -lrdmacm -lpthread
+	gcc -g -Wall -D_GNU_SOURCE -g -O2 -o $(TARGET1) $(TARGET1).c -libverbs -lrdmacm -lpthread
+	gcc -g -Wall -D_GNU_SOURCE -g -O2 -o $(TARGET2) $(TARGET2).c -libverbs -lrdmacm -lpthread
 
 clean: 
-	rm $(TARGET)
+	rm $(TARGET1)
+	rm $(TARGET2)
