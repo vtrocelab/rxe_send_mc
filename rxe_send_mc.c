@@ -438,7 +438,8 @@ static int poll_cqs(void)
 			if (poll_ret < 0) {
 				printf("rxe_send_mc: failed polling CQ: %d\n", poll_ret); 
 				return poll_ret; 
-			} else if (poll_ret >0) {
+			} 
+			else if (poll_ret >0) {
 				if(ts0.tv_sec == -1 && ts0.tv_nsec == -1){
 					clock_gettime(CLOCK_REALTIME, &ts0);
 				}
