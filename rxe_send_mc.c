@@ -1,7 +1,7 @@
 /* copy left (c) 2015 Viscore Technologies In. GPL license
-* changed from original mckey.c code to test multicast performance of
-* RoCE send multicast. 
-*/
+ * changed from original mckey.c code to test multicast performance of
+ * RoCE send multicast. 
+ */
 
 /*
  * Copyright (c) 2005-2007 Intel Corporation.  All rights reserved.
@@ -9,8 +9,7 @@
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
  * General Public License (GPL) Version 2, available from the file
- * COPYING in the main directory of this source tree, or the
- * OpenIB.org BSD license below:
+ * COPYING in the main directory of this source tree, or the * OpenIB.org BSD license below:
  *
  *     Redistribution and use in source and binary forms, with or
  *     without modification, are permitted provided that the following
@@ -38,13 +37,14 @@
  */
 
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <sys/socket.h>
 #include <netdb.h>
 #include <byteswap.h>
 #include <unistd.h>
@@ -89,6 +89,56 @@ static int unmapped_addr;
 static char *dst_addr;
 static char *src_addr;
 static enum rdma_port_space port_space = RDMA_PS_UDP;
+
+inline int if_continue ()
+{
+        fd_set readfds;
+        int    retval;
+        struct timeval tv;
+        int    fd_stdin;
+
+        fd_stdin = fileno(stdin);
+
+        FD_ZERO(&readfds);
+        FD_SET(fd_stdin, &readfds);
+
+        tv.tv_sec = 3; tv.tv_usec = 0;
+
+        retval = select(fd_stdin + 1, &readfds, NULL, NULL, &tv);
+        if (retval == -1) {
+                fprintf(stderr, "\nError in select : %s\n", strerror(errno));
+                exit(1);
+        } 
+
+	if (retval == 0) {
+                printf("\nPerforming default action after 3 seconds\n");
+        } 
+
+        return (!retval); //continue if NOT input any key
+}
+
+inline void print_line(struct timespec * ts, int done, int total)
+{
+	struct timespec ts1, ts0;
+
+	ts0 = * ts; 
+
+printf ("the value of ts0 is %d and %d\n",ts0.tv_sec,ts0.tv_nsec);
+	clock_gettime(CLOCK_REALTIME, &ts1);
+
+	double param =  1000000000;
+	long nsec = (ts1.tv_sec - ts0.tv_sec) * param + ts1.tv_nsec - ts0.tv_nsec;
+	long byte = (long)message_buffer * (long)message_batch * (long)message_size;
+	double bd = (byte/(nsec/param))/134217728;
+
+	if(is_sender) {	
+		printf ("sending message %d of %d, at bandwitdh %lf\n", done, total, bd);
+	} else {
+		printf ("recving message %d of %d, at bandwitdh %lf\n", done, total, bd);
+	}
+        
+	clock_gettime(CLOCK_REALTIME, ts); //reset the time spec
+}
 
 static int create_message(struct cmatest_node *node)
 {
@@ -423,9 +473,7 @@ static int poll_cqs(void)
 	struct ibv_wc wc[8];
 	int done, i, ret, poll_ret;
 	
-	struct timespec ts0, ts1;
-	ts0.tv_sec = -1;
-	ts0.tv_nsec = -1;
+	struct timespec ts0; ts0.tv_sec = -1; ts0.tv_nsec = -1;
 
 	if (print_base == -1) print_base = message_buffer * message_batch; 
 
@@ -433,13 +481,14 @@ static int poll_cqs(void)
 		if (!test.nodes[i].connected)
 			continue;
 
+		do {
 		for (done = 0; done < message_buffer * message_batch; done += poll_ret) {
 			poll_ret = ibv_poll_cq(test.nodes[i].cq, 8, wc);
 			if (poll_ret < 0) {
 				printf("rxe_send_mc: failed polling CQ: %d\n", poll_ret); 
 				return poll_ret; 
 			} 
-			else if (poll_ret >0) {
+			else if (poll_ret > 0) {
 				if(ts0.tv_sec == -1 && ts0.tv_nsec == -1){
 					clock_gettime(CLOCK_REALTIME, &ts0);
 				}
@@ -451,7 +500,8 @@ static int poll_cqs(void)
 						return ret; 
 					}
 					if (done % print_base == 0) { 
-						printf ("recv message %d of %d \n", done, message_buffer * message_batch); 
+						print_line(&ts0, done, message_buffer * message_batch);
+						clock_gettime(CLOCK_REALTIME, &ts0); //reset the time spec
 					}
 				} else if(wc->opcode == IBV_WC_SEND && wc->status == IBV_WC_SUCCESS ) {
 					ret = post_sends(&test.nodes[i],IBV_SEND_SIGNALED,poll_ret);
@@ -460,24 +510,19 @@ static int poll_cqs(void)
 						return ret; 
 					}
 					if(done % print_base == 0){
-						printf ("sending message %d of %d \n", done, message_buffer * message_batch);
+						print_line(&ts0, done, message_buffer * message_batch);
+						clock_gettime(CLOCK_REALTIME, &ts0); //reset the time spec
 					}
 				}
 			} 
 		}
-
-		{
-			clock_gettime(CLOCK_REALTIME, &ts1);
-			double param =  1000000000;
-			long nsec = (ts1.tv_sec - ts0.tv_sec) * param + ts1.tv_nsec - ts0.tv_nsec;
-			long byte = (long)message_buffer * (long)message_batch * (long)message_size;
-			double bd = (byte/(nsec/param))/134217728;
-			printf ("bandwidth %f\n", bd);
-			printf ("have sent the last message %d of %d \n", done, message_buffer * message_batch);
-		}
+		printf ("Have sent/recv the last message %d of %d \n", done, message_buffer * message_batch);
+        	printf ("Should we continue? enter any key in 3 seconds to break\n");
+		} while (message_batch >= 1000 && if_continue());
 	}
 	return 0;
 }
+
 
 static int connect_events(void)
 {
