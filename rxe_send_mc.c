@@ -52,8 +52,6 @@
 #include <time.h>
 #include <rdma/rdma_cma.h>
 
-#define POLL_BATCH 8
-
 struct cmatest_node {
 	int			id;
 	struct rdma_cm_id	*cma_id;
@@ -92,31 +90,44 @@ static char *dst_addr;
 static char *src_addr;
 static enum rdma_port_space port_space = RDMA_PS_UDP;
 
-uint32_t global_psn; 
-uint32_t global_psn_array[100];
+#define POLL_BATCH 8
+#define MAX_PSN 100
+#define SoftRoCE
 
-inline void check_psn(struct ibv_wc * wc)
+static uint32_t global_psn; 
+FILE * pFile;
+
+inline int check_psn(struct ibv_wc * wc, int poll_ret, long total_counter)
 {
-	int i;
-	static uint32_t psn_record = 0;
+	int i,k;
 	static int loss_counter = 0;
+	static uint32_t psn_record = 0;
+	static uint32_t loss_psn[MAX_PSN];
 	
 	if(psn_record == 0) {
 		psn_record = wc[0].imm_data;
 	}
 
-	for (i=0; i<POLL_BATCH; i++) {
-		if (wc[i].imm_data != psn_record ++) {
-			printf("PSN %ld is not equal previous %ld plus 1\n", wc[i].imm_data, psn_record); 
-			if (loss_counter >= 100) {
-				printf("100 package is missed, quite the test \n"); 
-				exit(-1);
-			} else {	
-				global_psn_array[loss_counter]= wc[i].imm_data;
-				loss_counter ++; 
+	for (i=0; i<poll_ret; i++) {
+		if (wc[i].imm_data != psn_record) {
+			loss_counter ++; 
+			loss_psn[loss_counter%MAX_PSN]= wc[i].imm_data;
+
+			if (0x00 == (loss_counter % MAX_PSN)) {
+				printf("PSN %lu is not equal previous %lu\n", wc[i].imm_data, psn_record); 
+				printf("%d package of %lu is missed, please quite the test \n",loss_counter,total_counter); 
+				fprintf(pFile, "%d package of %lu is missed at PSN =%lu\n",loss_counter,total_counter,wc[i].imm_data); 
+				for (k=0; k<MAX_PSN; k++) {
+					fprintf(pFile, "loss packet PSN is %lu\n",loss_psn[k]);
+				}
+	//			return (-1);
 			}
+
+			psn_record = wc[i].imm_data;
 		}
+		psn_record ++;
 	}
+	return 0; 
 }
 
 static int if_continue ()
@@ -131,7 +142,11 @@ static int if_continue ()
         FD_ZERO(&readfds);
         FD_SET(fd_stdin, &readfds);
 
+#ifdef SoftRoCE
+        tv.tv_sec = 1; tv.tv_usec = 0;
+#else 
         tv.tv_sec = 3; tv.tv_usec = 0;
+#endif 
 
        	printf ("Should we continue? enter any key in 3 seconds to break\n");
         retval = select(fd_stdin + 1, &readfds, NULL, NULL, &tv);
@@ -505,6 +520,7 @@ static int poll_cqs(void)
 {
 	struct ibv_wc wc[POLL_BATCH];
 	int done, i, ret, poll_ret;
+	long total_counter = 0;
 	
 	struct timespec ts0; ts0.tv_sec = -1; ts0.tv_nsec = -1;
 
@@ -527,7 +543,11 @@ static int poll_cqs(void)
 				}
 	                        
 				if(!is_sender) {
-					check_psn(wc);
+					total_counter += poll_ret;
+					ret = check_psn(wc,poll_ret,total_counter);
+					if ( ret < 0) {
+						return ret;
+					}
 
 					ret = post_recvs(&test.nodes[i],poll_ret);
 					if (ret < 0) { 
@@ -647,11 +667,9 @@ static int run(void)
 				ret = post_sends(&test.nodes[i], IBV_SEND_SIGNALED, 1);
 				if (ret)
 					goto out;
-
 			}
 		} else {
 			printf("receiving data transfers\n");
-
 		}
 
 		ret = poll_cqs();
@@ -679,6 +697,8 @@ int main(int argc, char **argv)
 	clock_gettime(CLOCK_REALTIME, &ts1);
 	srand(ts1.tv_nsec);
 	global_psn = rand(); 
+
+	pFile = fopen ("losspacket","w");
 
 	while ((op = getopt(argc, argv, "m:M:sb:c:C:i:S:p:")) != -1) {
 		switch (op) {
@@ -747,6 +767,7 @@ int main(int argc, char **argv)
 
 	ret = run();
 
+	fclose (pFile); 
 	printf("test complete\n");
 	destroy_nodes();
 	rdma_destroy_event_channel(test.channel);
