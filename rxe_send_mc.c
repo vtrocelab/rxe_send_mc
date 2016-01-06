@@ -92,7 +92,6 @@ static enum rdma_port_space port_space = RDMA_PS_UDP;
 
 #define POLL_BATCH 8
 #define MAX_PSN 100
-#define SoftRoCE
 
 static uint32_t global_psn; 
 FILE * pFile;
@@ -142,13 +141,13 @@ static int if_continue ()
         FD_ZERO(&readfds);
         FD_SET(fd_stdin, &readfds);
 
-#ifdef SoftRoCE
-        tv.tv_sec = 1; tv.tv_usec = 0;
-#else 
-        tv.tv_sec = 3; tv.tv_usec = 0;
-#endif 
+        if(is_sender) {
+		tv.tv_sec = 3; tv.tv_usec = 0;
+	} else { 
+	        tv.tv_sec = 1; tv.tv_usec = 0;
+	}
 
-       	printf ("Should we continue? enter any key in 3 seconds to break\n");
+       	printf ("Should we continue? enter any key in 1-3 seconds to break\n");
         retval = select(fd_stdin + 1, &readfds, NULL, NULL, &tv);
         if (retval == -1) {
                 fprintf(stderr, "\nError in select : %s\n", strerror(errno));
@@ -570,7 +569,8 @@ static int poll_cqs(void)
 				}
 			} 
 		}
-		//printf ("Have %s the last message %d of %d \n", (is_sender ? "send" : "recv"), done, message_buffer * message_batch);
+		printf ("Have the last message %u of %lu \n", done, total_counter);
+		fprintf (pFile,"Have the last message %u of %lu \n", done, total_counter);
 		} while (message_batch >= 1000 && if_continue());
 	}
 	return 0;
