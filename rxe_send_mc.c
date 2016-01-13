@@ -100,8 +100,8 @@ inline int recv_check_psn(struct ibv_wc * wc, int poll_ret, long total_counter)
 {
 	int i;
 	static int loss_counter = 0;
-	static uint32_t psn_record = 0;
-	static uint32_t loss_psn[MAX_PSN];
+	unsigned long psn_record = 0;
+//	static uint32_t loss_psn[MAX_PSN];
 	
 	if(psn_record == 0) {
 		psn_record = wc[0].imm_data;
@@ -111,17 +111,17 @@ inline int recv_check_psn(struct ibv_wc * wc, int poll_ret, long total_counter)
 		/* simple consider missed PSN sequnce as lost packet */
 		if (wc[i].imm_data != psn_record) {
 			loss_counter ++; 
-			loss_psn[loss_counter%MAX_PSN]= wc[i].imm_data;
+//			loss_psn[loss_counter%MAX_PSN]= wc[i].imm_data;
 
-			printf("PSN %lu is not equal previous %lu\n", wc[i].imm_data, psn_record); 
-			fprintf(pFile, "PSN %lu is not equal previous %lu\n", wc[i].imm_data, psn_record); 
+			printf("PSN %lu is not equal previous %lu\n", (unsigned long) wc[i].imm_data, psn_record); 
+			fprintf(pFile, "PSN %lu is not equal previous %lu\n", (unsigned long) wc[i].imm_data, psn_record); 
 /*
 			if (!(loss_counter % MAX_PSN)) {
 				printf("%d package of %lu is missed at PSN = %lu \n",loss_counter,total_counter,psn_record); 
 				fprintf(pFile, "%d package of %lu is missed at PSN =%lu\n",loss_counter,total_counter,wc[i].imm_data); 
 			}
 */
-			psn_record = wc[i].imm_data;
+			psn_record = (unsigned long) wc[i].imm_data;
 		}
 		psn_record ++;
 	}
@@ -177,9 +177,9 @@ inline void print_line(struct timespec * ts, int done, int batch_size)
 	double bd = (bits/(nsec/param))/1E9; //transfer back to seconds then giga bits
 
 	if(is_sender) {	
-		printf ("sending message %d of %d, at bandwitdh %lf gbits/s \n", done, message_buffer * message_batch, bd);
+		printf ("sending message %d of %d, at bw %lf gbits/s, and %lf msg/msec\n", done, message_buffer * message_batch, bd, batch_size/(nsec/1E6));
 	} else {
-		printf ("recving message %d of %d, at bandwitdh %lf gbits/s \n", done, message_buffer * message_batch, bd);
+		printf ("recving message %d of %d, at bw %lf gbits/s, and %lf msg/msec\n", done, message_buffer * message_batch, bd, batch_size/(nsec/1E6));
 	}
         
 	clock_gettime(CLOCK_REALTIME, ts); //reset the time spec
@@ -521,6 +521,7 @@ static int poll_send_cqs(void)
 	long total_counter = 0;
 	
 	struct timespec ts0; ts0.tv_sec = -1; ts0.tv_nsec = -1;
+	struct timespec tslow, remp; tslow.tv_sec = 0; tslow.tv_nsec = 1; 
 
 	if(!is_sender) {
 		printf(" called poll_send_cqs() with receiving side \n");
@@ -536,6 +537,8 @@ static int poll_send_cqs(void)
 		do {
 		for (done = 0; done < message_buffer * message_batch; done += poll_ret) {
 			poll_ret = ibv_poll_cq(test.nodes[i].cq, POLL_BATCH, wc);
+			total_counter += poll_ret;
+
 			if (poll_ret < 0) {
 				printf("rxe_send_mc: failed polling CQ: %d\n", poll_ret); 
 				return poll_ret; 
@@ -546,6 +549,13 @@ static int poll_send_cqs(void)
 				}
 	                        
 				if(wc->opcode == IBV_WC_SEND && wc->status == IBV_WC_SUCCESS ) {
+/*					if(done % 20 == 0) {
+						if(nanosleep(&tslow,&remp)) {
+							printf("sleep error\n");
+							return -1;
+						}
+					}
+*/
 					ret = post_sends(&test.nodes[i],IBV_SEND_SIGNALED,poll_ret);
 					if (ret < 0) { 
 						printf("rxe_send_mc: failed post sends after polling CQ: %d\n", ret); 
@@ -553,13 +563,12 @@ static int poll_send_cqs(void)
 					}
 					if(done != 0 && done % print_base == 0){
 						print_line(&ts0, done, print_base);
-						clock_gettime(CLOCK_REALTIME, &ts0); //reset the time spec
 					}
 				}
 			} 
 		}
 		printf ("Have the last message %u of %lu \n", done, total_counter);
-		fprintf (pFile,"Have the last message %u of %lu \n", done, total_counter);
+//		fprintf (pFile,"Have the last message %u of %lu \n", done, total_counter);
 		} while (message_batch >= 1000 && if_continue());
 	}
 	return 0;
@@ -568,7 +577,7 @@ static int poll_send_cqs(void)
 static int poll_recv_cqs(void)
 {
 	struct ibv_wc wc[POLL_BATCH];
-	int done, i, ret, poll_ret, poll_counter = 0;
+	int done, i, ret, poll_ret;
 	long total_counter = 0;
 	
 	struct timespec ts0; ts0.tv_sec = -1; ts0.tv_nsec = -1;
@@ -587,7 +596,7 @@ static int poll_recv_cqs(void)
 		do {
 		for (done = 0; done < message_buffer * message_batch; done += poll_ret) {
 			poll_ret = ibv_poll_cq(test.nodes[i].cq, POLL_BATCH, wc);
-			poll_counter += poll_ret;
+			total_counter += poll_ret;
 
 			if (poll_ret < 0) {
 				printf("rxe_send_mc: failed polling CQ: %d\n", poll_ret); 
@@ -598,19 +607,15 @@ static int poll_recv_cqs(void)
 					clock_gettime(CLOCK_REALTIME, &ts0);
 				}
 	                        
-				total_counter += poll_ret;
 				ret = recv_check_psn(wc,poll_ret,total_counter);
 				if ( ret < 0) {
 					return ret;
 				}
 
-				if(poll_counter >= 64) { 
-					ret = post_recvs(&test.nodes[i],poll_counter);
-					if (ret < 0) { 
-						printf("rxe_send_mc: failed post receives after polling CQ: %d\n", ret); 
-						return ret; 
-					}
-					poll_counter = 0;
+				ret = post_recvs(&test.nodes[i],poll_ret);
+				if (ret < 0) { 
+					printf("rxe_send_mc: failed post receives after polling CQ: %d\n", ret); 
+					return ret; 
 				}
 
 				if (done != 0 && done % print_base == 0) { 
@@ -618,8 +623,8 @@ static int poll_recv_cqs(void)
 				}
 			} 
 		}
-		printf ("Have the last message %u of %lu \n", done, total_counter);
-		fprintf (pFile,"Have the last message %u of %lu \n", done, total_counter);
+		printf ("Have sent the last message %u of %lu \n", done, total_counter);
+		fprintf (pFile,"Have sent the last message %u of %lu \n", done, total_counter);
 		} while (message_batch >= 1000 && if_continue());
 	}
 	return 0;
@@ -652,6 +657,7 @@ static int get_addr(char *dst, struct sockaddr *addr)
 	}
 
 	memcpy(addr, res->ai_addr, res->ai_addrlen);
+
 	freeaddrinfo(res);
 	return ret;
 }
@@ -712,7 +718,7 @@ static int run(void)
 		if (is_sender) {
 			printf("initiating data transfers\n");
 			for (i = 0; i < connections; i++) {
-				ret = post_sends(&test.nodes[i], IBV_SEND_SIGNALED, 1);
+				ret = post_sends(&test.nodes[i], IBV_SEND_SIGNALED, 50);
 				if (ret)
 					goto out;
 			}
