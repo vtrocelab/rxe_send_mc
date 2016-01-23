@@ -93,15 +93,13 @@ static enum rdma_port_space port_space = RDMA_PS_UDP;
 #define POLL_BATCH 32
 #define MAX_PSN 100
 
-static uint32_t global_psn; 
+uint32_t global_psn; 
 FILE * pFile;
 
 inline int recv_check_psn(struct ibv_wc * wc, int poll_ret, long total_counter)
 {
 	int i;
-	static int loss_counter = 0;
-	unsigned long psn_record = 0;
-//	static uint32_t loss_psn[MAX_PSN];
+	uint32_t psn_record = 0;
 	
 	if(psn_record == 0) {
 		psn_record = wc[0].imm_data;
@@ -110,18 +108,11 @@ inline int recv_check_psn(struct ibv_wc * wc, int poll_ret, long total_counter)
 	for (i=0; i<poll_ret; i++) {
 		/* simple consider missed PSN sequnce as lost packet */
 		if (wc[i].imm_data != psn_record) {
-			loss_counter ++; 
-//			loss_psn[loss_counter%MAX_PSN]= wc[i].imm_data;
 
-			printf("PSN %lu is not equal previous %lu\n", (unsigned long) wc[i].imm_data, psn_record); 
-			fprintf(pFile, "PSN %lu is not equal previous %lu\n", (unsigned long) wc[i].imm_data, psn_record); 
-/*
-			if (!(loss_counter % MAX_PSN)) {
-				printf("%d package of %lu is missed at PSN = %lu \n",loss_counter,total_counter,psn_record); 
-				fprintf(pFile, "%d package of %lu is missed at PSN =%lu\n",loss_counter,total_counter,wc[i].imm_data); 
-			}
-*/
-			psn_record = (unsigned long) wc[i].imm_data;
+			printf("PSN %lu is not equal previous %lu\n", (unsigned long) wc[i].imm_data, (unsigned long) psn_record); 
+			fprintf(pFile, "PSN %lu is not equal previous %lu\n", (unsigned long) wc[i].imm_data, (unsigned long) psn_record); 
+
+			psn_record = wc[i].imm_data;
 		}
 		psn_record ++;
 	}
@@ -521,7 +512,7 @@ static int poll_send_cqs(void)
 	long total_counter = 0;
 	
 	struct timespec ts0; ts0.tv_sec = -1; ts0.tv_nsec = -1;
-	struct timespec tslow, remp; tslow.tv_sec = 0; tslow.tv_nsec = 1; 
+//	struct timespec tslow, temp; tslow.tv_sec = 0; tslow.tv_nsec = 1; 
 
 	if(!is_sender) {
 		printf(" called poll_send_cqs() with receiving side \n");
@@ -568,7 +559,7 @@ static int poll_send_cqs(void)
 			} 
 		}
 		printf ("Have the last message %u of %lu \n", done, total_counter);
-//		fprintf (pFile,"Have the last message %u of %lu \n", done, total_counter);
+		fprintf (pFile,"Have the last message %u of %lu \n", done, total_counter);
 		} while (message_batch >= 1000 && if_continue());
 	}
 	return 0;
