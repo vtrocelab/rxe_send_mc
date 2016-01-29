@@ -90,8 +90,7 @@ static char *dst_addr;
 static char *src_addr;
 static enum rdma_port_space port_space = RDMA_PS_UDP;
 
-#define POLL_BATCH 32
-#define MAX_PSN 100
+#define POLL_BATCH 1000
 
 uint32_t global_psn; 
 FILE * pFile;
@@ -108,8 +107,10 @@ inline int recv_check_psn(struct ibv_wc * wc, int poll_ret, long total_counter)
 	for (i=0; i<poll_ret; i++) {
 		/* simple consider missed PSN sequnce as lost packet */
 		if (wc[i].imm_data != psn_record) {
-			printf("PSN %lu is not equal previous %lu\n", (unsigned long) wc[i].imm_data, (unsigned long) psn_record); 
-			fprintf(pFile, "PSN %lu is not equal previous %lu\n", (unsigned long) wc[i].imm_data, (unsigned long) psn_record); 
+			printf("PSN %lu is not equal previous %lu\n", 
+				(unsigned long) wc[i].imm_data, (unsigned long) psn_record); 
+			fprintf(pFile, "PSN %lu is not equal previous %lu\n", 
+				(unsigned long) wc[i].imm_data, (unsigned long) psn_record); 
 
 			psn_record = wc[i].imm_data;
 		}
@@ -131,12 +132,12 @@ static int if_continue ()
         FD_SET(fd_stdin, &readfds);
 
         if(is_sender) {
-		tv.tv_sec = 3; tv.tv_usec = 0;
+		tv.tv_sec = 0; tv.tv_usec = 1;
 	} else { 
-	        tv.tv_sec = 1; tv.tv_usec = 0;
+	        tv.tv_sec = 0; tv.tv_usec = 1;
 	}
 
-       	printf ("Should we continue? enter any key in 1-3 seconds to break\n");
+       	printf ("Should we continue? enter any key to break\n");
         retval = select(fd_stdin + 1, &readfds, NULL, NULL, &tv);
         if (retval == -1) {
                 fprintf(stderr, "\nError in select : %s\n", strerror(errno));
@@ -153,7 +154,7 @@ static int if_continue ()
         return (!retval); //continue if NOT input any key
 }
 
-inline void print_line(struct timespec * ts, int done, int batch_size)
+inline void print_line(struct timespec * ts, int done, int batch_size, uint32_t psn, int poll_ret)
 {
 	struct timespec ts1, ts0;
 
@@ -167,9 +168,11 @@ inline void print_line(struct timespec * ts, int done, int batch_size)
 	double bd = (bits/(nsec/param))/1E9; //transfer back to seconds then giga bits
 
 	if(is_sender) {	
-		printf ("sending message %d of %d, at bw %lf gbits/s, and %lf msg/msec\n", done, message_buffer * message_batch, bd, batch_size/(nsec/1E6));
+		printf ("sending message %d of %d, at bw %lf gbits/s, and %lf msg/msec at PSN=%u in poll_ret=%d \n", 
+			done, message_buffer * message_batch, bd, batch_size/(nsec/1E6),psn, poll_ret);
 	} else {
-		printf ("recving message %d of %d, at bw %lf gbits/s, and %lf msg/msec\n", done, message_buffer * message_batch, bd, batch_size/(nsec/1E6));
+		printf ("recving message %d of %d, at bw %lf gbits/s, and %lf msg/msec at PSN=%u in poll_ret=%d \n", 
+			done, message_buffer * message_batch, bd, batch_size/(nsec/1E6),psn, poll_ret);
 	}
         
 	clock_gettime(CLOCK_REALTIME, ts); //reset the time spec
@@ -509,6 +512,7 @@ static int poll_send_cqs(void)
 	struct ibv_wc wc[POLL_BATCH];
 	int done, i, ret, poll_ret;
 	long total_counter = 0;
+	long print_counter = 0;
 	
 	struct timespec ts0; ts0.tv_sec = -1; ts0.tv_nsec = -1;
 //	struct timespec tslow, temp; tslow.tv_sec = 0; tslow.tv_nsec = 1; 
@@ -525,9 +529,9 @@ static int poll_send_cqs(void)
 			continue;
 
 		do {
-		for (done = 0; done < message_buffer * message_batch; done += poll_ret) {
+		for (done = 0; done < message_buffer * message_batch; ) {
 			poll_ret = ibv_poll_cq(test.nodes[i].cq, POLL_BATCH, wc);
-			total_counter += poll_ret;
+			total_counter += poll_ret; print_counter += poll_ret; done += poll_ret;
 
 			if (poll_ret < 0) {
 				printf("rxe_send_mc: failed polling CQ: %d\n", poll_ret); 
@@ -551,14 +555,15 @@ static int poll_send_cqs(void)
 						printf("rxe_send_mc: failed post sends after polling CQ: %d\n", ret); 
 						return ret; 
 					}
-					if(done != 0 && done % print_base == 0){
-						print_line(&ts0, done, print_base);
+					if( print_counter >= print_base){
+						print_line(&ts0, print_counter, print_base, global_psn, poll_ret);
+						print_counter -= print_base;
 					}
 				}
 			} 
 		}
-		printf ("Have sent the last message %u of %lu at PSN=%u\n", done, total_counter,wc[0].imm_data);
-		fprintf (pFile,"Have sent the last message %u of %lu at PSN=%u\n", done, total_counter,wc[0].imm_data);
+		printf ("Have sent the last message %u of %lu at PSN=%u\n", done, total_counter,global_psn);
+		fprintf (pFile,"Have sent the last message %u of %lu at PSN=%u\n", done, total_counter,global_psn);
 		} while (message_batch >= 1000 && if_continue());
 	}
 	return 0;
@@ -567,8 +572,9 @@ static int poll_send_cqs(void)
 static int poll_recv_cqs(void)
 {
 	struct ibv_wc wc[POLL_BATCH];
-	int done, i, ret, poll_ret;
+	int done, i, ret, poll_ret = 0;
 	long total_counter = 0;
+	long print_counter = 0;
 	
 	struct timespec ts0; ts0.tv_sec = -1; ts0.tv_nsec = -1;
 
@@ -584,9 +590,9 @@ static int poll_recv_cqs(void)
 			continue;
 
 		do {
-		for (done = 0; done < message_buffer * message_batch; done += poll_ret) {
+		for (done = 0; done < message_buffer * message_batch; ) {
 			poll_ret = ibv_poll_cq(test.nodes[i].cq, POLL_BATCH, wc);
-			total_counter += poll_ret;
+			total_counter += poll_ret; print_counter += poll_ret; done += poll_ret;
 
 			if (poll_ret < 0) {
 				printf("rxe_send_mc: failed polling CQ: %d\n", poll_ret); 
@@ -608,13 +614,16 @@ static int poll_recv_cqs(void)
 					return ret; 
 				}
 
-				if (done != 0 && done % print_base == 0) { 
-					print_line(&ts0, done, print_base);
+				if (print_counter >= print_base) { 
+					print_line(&ts0, print_counter, print_base, wc[poll_ret - 1].imm_data, poll_ret);
+					print_counter -= print_base;
 				}
 			} 
 		}
-		printf ("Have received the last message %u of %lu at PNS=%u \n", done, total_counter,wc[0].imm_data);
-		fprintf (pFile,"Have received the last message %u of %lu at PSN=%u\n", done, total_counter,wc[0].imm_data);
+		printf ("Have received the last message %u of %lu at PSN=%u in poll_ret=%d \n", 
+				done, total_counter,wc[poll_ret - 1].imm_data, poll_ret);
+		fprintf (pFile,"Have received the last message %u of %lu at PSN=%u in poll_ret=%d \n", 
+				done, total_counter,wc[poll_ret - 1].imm_data, poll_ret);
 		} while (message_batch >= 1000 && if_continue());
 	}
 	return 0;
